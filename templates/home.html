@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <title>Lost and Found</title>
+    <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600&display=swap" rel="stylesheet">
+    <style>
+        body { font-family:'Poppins',sans-serif; background:linear-gradient(to right,#f8f9fa,#e9ecef); }
+        .card { transition:transform .2s,box-shadow .2s; }
+        .card:hover { transform:translateY(-4px); box-shadow:0 8px 24px rgba(0,0,0,.1)!important; }
+        .no-img { height:200px; background:linear-gradient(135deg,#dee2e6,#ced4da);
+                  display:flex;align-items:center;justify-content:center;font-size:3rem;
+                  border-radius:12px 12px 0 0; }
+        .score-badge { position:absolute;top:10px;right:10px;font-size:.75rem;font-weight:700;
+                       padding:4px 10px;border-radius:20px;backdrop-filter:blur(4px); }
+        .score-high   { background:rgba(25,135,84,.9);color:white; }
+        .score-medium { background:rgba(255,193,7,.9);color:#333; }
+        .score-low    { background:rgba(108,117,125,.85);color:white; }
+        .cat-pill { cursor:pointer;border-radius:20px;font-size:.82rem;padding:5px 14px;
+                    font-weight:500;border:2px solid transparent;transition:all .15s;text-decoration:none; }
+        .cat-pill.active { background:#212529;color:white;border-color:#212529; }
+        .cat-pill:not(.active) { background:white;color:#495057;border-color:#dee2e6; }
+        .cat-pill:not(.active):hover { border-color:#adb5bd; }
+        .time-chip { font-size:.72rem;color:#adb5bd; }
+    </style>
+</head>
+<body>
+<div class="container py-4">
+
+    <!-- Header -->
+    <div class="text-center mb-3">
+        <h1 class="fw-bold">🔍 Digital Lost & Found</h1>
+        <p class="text-muted mb-0">Report lost items · Report found items · Get matched automatically</p>
+    </div>
+
+    <!-- Nav buttons -->
+    <div class="d-flex justify-content-center gap-2 mb-4 flex-wrap">
+        <a href="/" class="btn btn-outline-dark fw-semibold">🏠 Lost Items</a>
+        <a href="/found-reports" class="btn btn-outline-primary fw-semibold">📦 Found Reports</a>
+        <a href="/report-found" class="btn btn-primary fw-semibold">✋ I Found Something</a>
+        <a href="/matches" class="btn btn-outline-success fw-semibold">🔗 Matches</a>
+        <a href="/found-items" class="btn btn-warning fw-semibold">✅ Recovered Items</a>
+    </div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+        <div class="alert alert-{{ 'success' if cat=='success' else 'info' }} alert-dismissible fade show">
+          {{ msg }}<button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+        </div>
+      {% endfor %}
+    {% endwith %}
+
+    <hr>
+
+    <!-- Search -->
+    <div class="card shadow-lg border-0 rounded-4 p-4 mb-4">
+        <h4 class="fw-bold mb-3">🔎 Search Lost Items</h4>
+        <form action="/search" method="POST" enctype="multipart/form-data">
+            <div class="row g-3 mb-3">
+                <div class="col-md-8">
+                    <div class="input-group">
+                        <span class="input-group-text">🔍</span>
+                        <input type="text" name="query" class="form-control"
+                               placeholder="Search by name, description or location"
+                               value="{{ query if query else '' }}">
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <select name="category" class="form-select">
+                        <option value="">All Categories</option>
+                        {% for cat in categories %}
+                            <option value="{{ cat }}" {% if active_category==cat %}selected{% endif %}>{{ cat }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+            </div>
+            <div class="mb-3">
+                <label class="form-label fw-semibold text-muted small">Upload image to search by photo (optional)</label>
+                <input type="file" name="image" class="form-control" accept="image/*">
+            </div>
+            <button type="submit" class="btn btn-dark w-100 fw-semibold">Search</button>
+        </form>
+    </div>
+
+    <!-- Report Lost -->
+    <div class="card shadow-lg border-0 rounded-4 p-4 mb-4">
+        <h4 class="fw-bold mb-3">📌 Report a Lost Item</h4>
+        <form method="POST" action="/report-lost" enctype="multipart/form-data">
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Item Name</label>
+                    <input type="text" name="item_name" class="form-control" required>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Category</label>
+                    <select name="category" class="form-select">
+                        {% for cat in categories %}<option value="{{ cat }}">{{ cat }}</option>{% endfor %}
+                    </select>
+                </div>
+                <div class="col-12">
+                    <label class="form-label fw-semibold">Description</label>
+                    <textarea name="description" class="form-control" rows="2" required></textarea>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Location Lost</label>
+                    <input type="text" name="location" class="form-control" required>
+                </div>
+                <div class="col-md-6">
+                    <label class="form-label fw-semibold">Your Name</label>
+                    <input type="text" name="reporter" class="form-control" required>
+                </div>
+                <div class="col-12">
+                    <label class="form-label fw-semibold">Your Email <span class="text-muted small">(for match notifications)</span></label>
+                    <input type="email" name="email" class="form-control" required>
+                </div>
+                <div class="col-12">
+                    <label class="form-label fw-semibold">Upload Image (optional)</label>
+                    <input type="file" name="image" class="form-control" accept="image/*">
+                </div>
+                <div class="col-12">
+                    <button type="submit" class="btn btn-danger w-100 fw-semibold">Report Lost Item</button>
+                </div>
+            </div>
+        </form>
+    </div>
+
+    <hr>
+
+    <!-- Category pills -->
+    {% if not query %}
+    <div class="d-flex flex-wrap gap-2 mb-4">
+        <a href="/" class="cat-pill {{ 'active' if not active_category else '' }}">All</a>
+        {% for cat in categories %}
+            <a href="/?category={{ cat }}" class="cat-pill {{ 'active' if active_category==cat else '' }}">{{ cat }}</a>
+        {% endfor %}
+    </div>
+    {% endif %}
+
+    <!-- Results heading -->
+    <h2 class="fw-bold mb-3">
+        {% if query %}Search Results for "<em>{{ query }}</em>"
+        {% elif active_category %}{{ active_category }} Items
+        {% else %}All Lost Items{% endif %}
+        <span class="text-muted fs-5">({{ items_with_scores|length }})</span>
+    </h2>
+
+    {% if items_with_scores %}
+    <div class="row g-4">
+    {% for item, score in items_with_scores %}
+        <div class="col-md-4">
+            <div class="card shadow-sm border-0 rounded-4 h-100 position-relative">
+                {% if score is not none and query %}
+                    {% if score >= 0.6 %}<span class="score-badge score-high">{{ (score*100)|int }}% match</span>
+                    {% elif score >= 0.3 %}<span class="score-badge score-medium">{{ (score*100)|int }}% match</span>
+                    {% else %}<span class="score-badge score-low">{{ (score*100)|int }}% match</span>{% endif %}
+                {% endif %}
+                {% if item.image %}
+                    <img src="{{ url_for('static',filename='uploads/'+item.image) }}"
+                         class="card-img-top rounded-top-4" style="height:200px;object-fit:cover;">
+                {% else %}<div class="no-img">📦</div>{% endif %}
+                <div class="card-body">
+                    <div class="d-flex justify-content-between align-items-start mb-1">
+                        <h5 class="card-title fw-bold mb-0">{{ item.name }}</h5>
+                        <span class="badge bg-secondary ms-2" style="font-size:.7rem">{{ item.category or 'Other' }}</span>
+                    </div>
+                    <p class="time-chip mb-2">🕐 {{ time_ago(item.reported_at) }}</p>
+                    <p class="text-muted small mb-2">{{ item.description }}</p>
+                    <hr class="my-2">
+                    <p class="mb-1 small"><b>📍</b> {{ item.location }}</p>
+                    <p class="mb-1 small"><b>👤</b> {{ item.reporter }}</p>
+                    <a href="/mark-found/{{ item.id }}" class="btn btn-success w-100 fw-semibold mt-2">Mark as Found</a>
+                </div>
+            </div>
+        </div>
+    {% endfor %}
+    </div>
+    {% else %}
+        {% if query or active_category %}
+            <div class="alert alert-warning">No items found. Try different keywords or <a href="/" class="alert-link">browse all</a>.</div>
+        {% else %}
+            <p class="text-muted">No lost items reported yet.</p>
+        {% endif %}
+    {% endif %}
+
+    <footer class="text-center mt-5 text-muted">
+        <p class="small">© 2026 Digital Lost & Found System | Built with Flask 💙</p>
+    </footer>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

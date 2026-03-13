@@ -85,6 +85,8 @@ class ChatMessage(db.Model):
 
 with app.app_context():
     db.create_all()
+    # Ensure upload folder exists on server startup
+    os.makedirs("static/uploads", exist_ok=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -5,40 +5,29 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity as sk_cosine_similarity
 from PIL import Image
 from datetime import datetime
+import imagehash
 import numpy as np
 import os
-import tensorflow as tf
-from tensorflow.keras.applications import MobileNetV2
-from tensorflow.keras.applications.mobilenet_v2 import preprocess_input
-from tensorflow.keras.models import Model
 
 app = Flask(__name__)
-app.secret_key = "lostfound-secret-key"
-app.config["UPLOAD_FOLDER"]             = "static/uploads"
-app.config["SQLALCHEMY_DATABASE_URI"]   = "sqlite:///lostfound.db"
+app.secret_key = os.environ.get("SECRET_KEY", "lostfound-secret-key")
+app.config["UPLOAD_FOLDER"]                  = "static/uploads"
+app.config["SQLALCHEMY_DATABASE_URI"]        = os.environ.get("DATABASE_URL", "sqlite:///lostfound.db")
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 
-# ── Email config (Gmail) ──────────────────────────────────────────────────────
-# Fill in your Gmail address and an App Password (not your normal password).
-# To generate an App Password: Google Account → Security → 2-Step Verification → App Passwords
-app.config["MAIL_SERVER"]   = "smtp.gmail.com"
-app.config["MAIL_PORT"]     = 587
-app.config["MAIL_USE_TLS"]  = True
-app.config["MAIL_USERNAME"] = "your_email@gmail.com"   # ← change this
-app.config["MAIL_PASSWORD"] = "your_app_password"      # ← change this
-app.config["MAIL_DEFAULT_SENDER"] = "your_email@gmail.com"  # ← change this
+# ── Email config — set these as environment variables on Render ───────────────
+app.config["MAIL_SERVER"]        = "smtp.gmail.com"
+app.config["MAIL_PORT"]          = 587
+app.config["MAIL_USE_TLS"]       = True
+app.config["MAIL_USERNAME"]      = os.environ.get("MAIL_USERNAME", "")
+app.config["MAIL_PASSWORD"]      = os.environ.get("MAIL_PASSWORD", "")
+app.config["MAIL_DEFAULT_SENDER"]= os.environ.get("MAIL_USERNAME", "")
 
-db   = Mail(app) if False else None   # placeholder
 db   = SQLAlchemy(app)
 mail = Mail(app)
 
-CATEGORIES   = ["Electronics", "Clothing", "Accessories", "Documents", "Bags", "Keys", "Other"]
-MATCH_THRESHOLD = 0.35   # minimum score to trigger a notification
-
-# ── MobileNetV2 feature extractor ────────────────────────────────────────────
-_base            = MobileNetV2(weights="imagenet", include_top=False, pooling="avg")
-feature_extractor = __import__('tensorflow').keras.models.Model(inputs=_base.input, outputs=_base.output)
-feature_extractor.trainable = False
+CATEGORIES      = ["Electronics", "Clothing", "Accessories", "Documents", "Bags", "Keys", "Other"]
+MATCH_THRESHOLD = 0.35
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -51,7 +40,7 @@ class LostItem(db.Model):
     description = db.Column(db.String(500))
     location    = db.Column(db.String(100))
     reporter    = db.Column(db.String(100))
-    email       = db.Column(db.String(150))          # needed for notifications
+    email       = db.Column(db.String(150))
     category    = db.Column(db.String(50), default="Other")
     found       = db.Column(db.Boolean, default=False)
     image       = db.Column(db.String(200))
@@ -64,7 +53,7 @@ class FoundItem(db.Model):
     id          = db.Column(db.Integer, primary_key=True)
     name        = db.Column(db.String(100))
     description = db.Column(db.String(500))
-    location    = db.Column(db.String(100))   # where it was found
+    location    = db.Column(db.String(100))
     finder      = db.Column(db.String(100))
     email       = db.Column(db.String(150))
     category    = db.Column(db.String(50), default="Other")
@@ -76,24 +65,22 @@ class FoundItem(db.Model):
 
 
 class Match(db.Model):
-    """Links a FoundItem to a LostItem with a confidence score."""
     id            = db.Column(db.Integer, primary_key=True)
     lost_item_id  = db.Column(db.Integer, db.ForeignKey("lost_item.id"), nullable=False)
     found_item_id = db.Column(db.Integer, db.ForeignKey("found_item.id"), nullable=False)
     score         = db.Column(db.Float, default=0.0)
-    # Ownership verification status: pending / approved / rejected
     status        = db.Column(db.String(20), default="pending")
     created_at    = db.Column(db.DateTime, default=datetime.utcnow)
     messages      = db.relationship("ChatMessage", backref="match", lazy=True)
 
 
 class ChatMessage(db.Model):
-    id         = db.Column(db.Integer, primary_key=True)
-    match_id   = db.Column(db.Integer, db.ForeignKey("match.id"), nullable=False)
-    sender     = db.Column(db.String(100))   # "owner" or "finder"
-    sender_name= db.Column(db.String(100))
-    body       = db.Column(db.Text)
-    sent_at    = db.Column(db.DateTime, default=datetime.utcnow)
+    id          = db.Column(db.Integer, primary_key=True)
+    match_id    = db.Column(db.Integer, db.ForeignKey("match.id"), nullable=False)
+    sender      = db.Column(db.String(100))
+    sender_name = db.Column(db.String(100))
+    body        = db.Column(db.Text)
+    sent_at     = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 with app.app_context():
@@ -104,120 +91,107 @@ with app.app_context():
 #  HELPERS
 # ══════════════════════════════════════════════════════════════════════════════
 
-def extract_features(img_path):
-    img  = Image.open(img_path).convert("RGB").resize((224, 224))
-    arr  = np.array(img, dtype=np.float32)
-    arr  = preprocess_input(arr)
-    arr  = np.expand_dims(arr, axis=0)
-    feat = feature_extractor.predict(arr, verbose=0)
-    return feat[0] / (np.linalg.norm(feat[0]) + 1e-7)
-
-
 def img_sim(path_a, path_b):
+    """
+    Image similarity using perceptual hashing (imagehash).
+    Returns a 0-1 score: 1.0 = identical, 0.0 = completely different.
+    Fast, lightweight, no GPU or large models needed.
+    """
     try:
-        return float(np.dot(extract_features(path_a), extract_features(path_b)))
+        hash_a = imagehash.phash(Image.open(path_a))
+        hash_b = imagehash.phash(Image.open(path_b))
+        # phash difference ranges 0 (identical) to 64 (opposite)
+        diff = hash_a - hash_b
+        return max(0.0, 1.0 - diff / 64.0)
     except Exception:
         return 0.0
 
 
 def text_score(query, items):
-    """TF-IDF cosine similarity between query and a list of items."""
+    """TF-IDF cosine similarity between query string and list of items."""
     if not items:
         return []
     if len(items) == 1:
-        # TF-IDF unreliable for single doc; fall back to keyword check
         text = f"{items[0].name} {items[0].description} {items[0].location}".lower()
         return [0.6 if any(w in text for w in query.lower().split()) else 0.0]
     texts = [f"{i.name} {i.description} {i.location} {i.category}" for i in items]
     texts.append(query)
-    vec    = TfidfVectorizer(stop_words="english")
-    mat    = vec.fit_transform(texts)
-    sims   = sk_cosine_similarity(mat[-1], mat[:-1])
+    vec  = TfidfVectorizer(stop_words="english")
+    mat  = vec.fit_transform(texts)
+    sims = sk_cosine_similarity(mat[-1], mat[:-1])
     return sims[0].tolist()
 
 
 def match_score(found_item, lost_items):
-    """
-    Returns a dict {lost_item.id: score} comparing a FoundItem
-    against every LostItem using text + optional image similarity.
-    """
+    """Returns {lost_item.id: score} for all lost items vs a found item."""
     if not lost_items:
         return {}
-
-    query  = f"{found_item.name} {found_item.description} {found_item.location} {found_item.category}"
+    query    = f"{found_item.name} {found_item.description} {found_item.location} {found_item.category}"
     t_scores = text_score(query, lost_items)
     scores   = {item.id: float(s) for item, s in zip(lost_items, t_scores)}
 
-    # Image boost if both have images
     if found_item.image:
         found_path = os.path.join(app.config["UPLOAD_FOLDER"], found_item.image)
         for item in lost_items:
             if item.image:
                 lost_path = os.path.join(app.config["UPLOAD_FOLDER"], item.image)
-                img_score = img_sim(found_path, lost_path)
-                # blend 40% text + 60% image
-                scores[item.id] = scores[item.id] * 0.4 + img_score * 0.6
-
+                iscore = img_sim(found_path, lost_path)
+                scores[item.id] = scores[item.id] * 0.4 + iscore * 0.6
     return scores
 
 
 def send_notification(lost_item, found_item, score):
-    """Email the owner of the lost item when a match is found."""
+    """Email the lost item owner when a match is detected."""
     if not lost_item.email:
         return
     try:
-        match = Match.query.filter_by(
-            lost_item_id=lost_item.id,
-            found_item_id=found_item.id
-        ).first()
+        match      = Match.query.filter_by(lost_item_id=lost_item.id,
+                                           found_item_id=found_item.id).first()
         verify_url = url_for("verify_match", match_id=match.id, _external=True)
         msg = MailMessage(
             subject=f"🎉 Possible match found for your lost {lost_item.name}!",
             recipients=[lost_item.email],
             html=f"""
             <h2>Good news, {lost_item.reporter}!</h2>
-            <p>Someone reported finding an item that matches your lost <strong>{lost_item.name}</strong>
-            with a <strong>{int(score*100)}% confidence score</strong>.</p>
+            <p>Someone reported finding an item that matches your lost
+            <strong>{lost_item.name}</strong> with a
+            <strong>{int(score*100)}% confidence score</strong>.</p>
             <p><b>Found item:</b> {found_item.name}<br>
                <b>Description:</b> {found_item.description}<br>
                <b>Found at:</b> {found_item.location}<br>
                <b>Finder:</b> {found_item.finder}</p>
-            <p>Click below to review the match and start a conversation with the finder:</p>
+            <p>Click below to review the match and contact the finder:</p>
             <a href="{verify_url}" style="background:#198754;color:white;padding:10px 20px;
                border-radius:6px;text-decoration:none;font-weight:bold;">
                Review Match & Contact Finder
             </a>
             <p style="color:#888;font-size:12px;margin-top:20px;">
-            If this doesn't look like your item, you can reject the match on that page.
-            </p>
-            """
+            If this is not your item, you can reject the match on that page.
+            </p>"""
         )
         mail.send(msg)
-        app.logger.info(f"[EMAIL] Sent match notification to {lost_item.email}")
     except Exception as e:
-        app.logger.warning(f"[EMAIL] Failed to send: {e}")
+        app.logger.warning(f"[EMAIL] Failed: {e}")
 
 
-def time_ago(dt):
-    if not dt:
-        return ""
-    delta   = datetime.utcnow() - dt
-    seconds = int(delta.total_seconds())
-    if seconds < 60:    return "just now"
-    if seconds < 3600:  return f"{seconds // 60}m ago"
-    if seconds < 86400: return f"{seconds // 3600}h ago"
-    if seconds < 604800:return f"{seconds // 86400}d ago"
-    return dt.strftime("%b %d, %Y")
-
-
-def save_image(file_field):
-    """Save uploaded image and return filename, or None."""
-    f = request.files.get(file_field)
+def save_image(field):
+    f = request.files.get(field)
     if f and f.filename:
         os.makedirs(app.config["UPLOAD_FOLDER"], exist_ok=True)
         f.save(os.path.join(app.config["UPLOAD_FOLDER"], f.filename))
         return f.filename
     return None
+
+
+def time_ago(dt):
+    if not dt:
+        return ""
+    seconds = int((datetime.utcnow() - dt).total_seconds())
+    if seconds < 60:     return "just now"
+    if seconds < 3600:   return f"{seconds//60}m ago"
+    if seconds < 86400:  return f"{seconds//3600}h ago"
+    if seconds < 604800: return f"{seconds//86400}d ago"
+    return dt.strftime("%b %d, %Y")
 
 
 app.jinja_env.globals["time_ago"] = time_ago
@@ -283,7 +257,7 @@ def search():
         uploaded.save(qpath)
         for item in items:
             if item.image:
-                ipath = os.path.join(app.config["UPLOAD_FOLDER"], item.image)
+                ipath  = os.path.join(app.config["UPLOAD_FOLDER"], item.image)
                 iscore = img_sim(qpath, ipath)
                 score_map[item.id] = (score_map[item.id]*0.4 + iscore*0.6) if query else iscore
 
@@ -299,13 +273,10 @@ def search():
 def report_lost():
     filename = save_image("image")
     item = LostItem(
-        name        = request.form["item_name"],
-        description = request.form["description"],
-        location    = request.form["location"],
-        reporter    = request.form["reporter"],
-        email       = request.form.get("email", ""),
-        category    = request.form.get("category", "Other"),
-        image       = filename,
+        name=request.form["item_name"], description=request.form["description"],
+        location=request.form["location"], reporter=request.form["reporter"],
+        email=request.form.get("email", ""), category=request.form.get("category", "Other"),
+        image=filename,
     )
     db.session.add(item)
     db.session.commit()
@@ -329,7 +300,7 @@ def found_items():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  ROUTES — FOUND ITEMS (reporting by finders)
+#  ROUTES — FOUND ITEMS
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/report-found", methods=["GET", "POST"])
@@ -337,46 +308,37 @@ def report_found_page():
     if request.method == "GET":
         return render_template("report_found.html", categories=CATEGORIES)
 
-    filename = save_image("image")
+    filename   = save_image("image")
     found_item = FoundItem(
-        name        = request.form["item_name"],
-        description = request.form["description"],
-        location    = request.form["location"],
-        finder      = request.form["finder"],
-        email       = request.form.get("email", ""),
-        category    = request.form.get("category", "Other"),
-        image       = filename,
+        name=request.form["item_name"], description=request.form["description"],
+        location=request.form["location"], finder=request.form["finder"],
+        email=request.form.get("email", ""), category=request.form.get("category", "Other"),
+        image=filename,
     )
     db.session.add(found_item)
     db.session.commit()
 
-    # ── Auto-match against all active lost items ──────────────────────────────
-    lost_items = LostItem.query.filter_by(found=False).all()
-    scores     = match_score(found_item, lost_items)
-
+    lost_items      = LostItem.query.filter_by(found=False).all()
+    scores          = match_score(found_item, lost_items)
     matches_created = 0
+
     for lost_item in lost_items:
         s = scores.get(lost_item.id, 0.0)
         if s >= MATCH_THRESHOLD:
-            # avoid duplicate matches
-            existing = Match.query.filter_by(
-                lost_item_id=lost_item.id,
-                found_item_id=found_item.id
-            ).first()
+            existing = Match.query.filter_by(lost_item_id=lost_item.id,
+                                             found_item_id=found_item.id).first()
             if not existing:
-                m = Match(lost_item_id=lost_item.id,
-                          found_item_id=found_item.id,
-                          score=s)
+                m = Match(lost_item_id=lost_item.id, found_item_id=found_item.id, score=s)
                 db.session.add(m)
-                db.session.flush()   # get m.id before send_notification
+                db.session.flush()
                 db.session.commit()
                 send_notification(lost_item, found_item, s)
                 matches_created += 1
 
     if matches_created:
-        flash(f"Found item reported! {matches_created} potential owner(s) have been notified by email.", "success")
+        flash(f"Found item reported! {matches_created} potential owner(s) notified by email.", "success")
     else:
-        flash("Found item reported! No strong matches yet — it will be checked as new lost reports come in.", "info")
+        flash("Found item reported! No strong matches yet — owners will be notified as new lost reports come in.", "info")
 
     return redirect("/found-reports")
 
@@ -388,7 +350,7 @@ def found_reports():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  ROUTES — MATCHES & OWNERSHIP VERIFICATION
+#  ROUTES — MATCHES & VERIFICATION
 # ══════════════════════════════════════════════════════════════════════════════
 
 @app.route("/verify/<int:match_id>")
@@ -422,25 +384,21 @@ def reject_match(match_id):
 @app.route("/chat/<int:match_id>", methods=["GET", "POST"])
 def chat(match_id):
     match = Match.query.get_or_404(match_id)
-
     if match.status != "approved":
-        flash("This chat is not available until the match is approved by the owner.", "warning")
+        flash("Chat is not available until the owner approves the match.", "warning")
         return redirect(url_for("verify_match", match_id=match_id))
 
     if request.method == "POST":
-        sender      = request.form.get("sender")       # "owner" or "finder"
-        sender_name = request.form.get("sender_name")
-        body        = request.form.get("body", "").strip()
+        body = request.form.get("body", "").strip()
         if body:
-            msg = ChatMessage(match_id=match_id, sender=sender,
-                              sender_name=sender_name, body=body)
+            msg = ChatMessage(match_id=match_id,
+                              sender=request.form.get("sender"),
+                              sender_name=request.form.get("sender_name"),
+                              body=body)
             db.session.add(msg)
-
-            # If the item has been confirmed as recovered, mark both as done
             if request.form.get("mark_recovered"):
-                match.lost_item.found = True
+                match.lost_item.found      = True
                 match.found_item.handed_over = True
-
             db.session.commit()
 
     messages = ChatMessage.query.filter_by(match_id=match_id).order_by(ChatMessage.sent_at).all()

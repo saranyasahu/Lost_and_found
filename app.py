@@ -310,32 +310,47 @@ def report_found_page():
     if request.method == "GET":
         return render_template("report_found.html", categories=CATEGORIES)
 
-    filename   = save_image("image")
-    found_item = FoundItem(
-        name=request.form["item_name"], description=request.form["description"],
-        location=request.form["location"], finder=request.form["finder"],
-        email=request.form.get("email", ""), category=request.form.get("category", "Other"),
-        image=filename,
-    )
-    db.session.add(found_item)
-    db.session.commit()
+    try:
+        filename   = save_image("image")
+        found_item = FoundItem(
+            name=request.form["item_name"], description=request.form["description"],
+            location=request.form["location"], finder=request.form["finder"],
+            email=request.form.get("email", ""), category=request.form.get("category", "Other"),
+            image=filename,
+        )
+        db.session.add(found_item)
+        db.session.commit()
+        app.logger.info(f"[FOUND] Saved found item: {found_item.name}")
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"[FOUND] Failed to save found item: {e}")
+        flash("Something went wrong saving the item. Please try again.", "danger")
+        return redirect("/report-found")
 
-    lost_items      = LostItem.query.filter_by(found=False).all()
-    scores          = match_score(found_item, lost_items)
+    # Run auto-matching separately — errors here should NOT break the page
     matches_created = 0
+    try:
+        lost_items = LostItem.query.filter_by(found=False).all()
+        app.logger.info(f"[MATCH] Comparing against {len(lost_items)} lost items")
+        scores = match_score(found_item, lost_items)
 
-    for lost_item in lost_items:
-        s = scores.get(lost_item.id, 0.0)
-        if s >= MATCH_THRESHOLD:
-            existing = Match.query.filter_by(lost_item_id=lost_item.id,
-                                             found_item_id=found_item.id).first()
-            if not existing:
-                m = Match(lost_item_id=lost_item.id, found_item_id=found_item.id, score=s)
-                db.session.add(m)
-                db.session.flush()
-                db.session.commit()
-                send_notification(lost_item, found_item, s)
-                matches_created += 1
+        for lost_item in lost_items:
+            s = scores.get(lost_item.id, 0.0)
+            app.logger.info(f"[MATCH] Score vs '{lost_item.name}': {round(s, 3)}")
+            if s >= MATCH_THRESHOLD:
+                existing = Match.query.filter_by(lost_item_id=lost_item.id,
+                                                 found_item_id=found_item.id).first()
+                if not existing:
+                    m = Match(lost_item_id=lost_item.id, found_item_id=found_item.id, score=s)
+                    db.session.add(m)
+                    db.session.commit()
+                    app.logger.info(f"[MATCH] Match created! Score={round(s,3)}")
+                    send_notification(lost_item, found_item, s)
+                    matches_created += 1
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"[MATCH] Matching error: {e}")
+        # Don't crash — item is already saved, just skip matching
 
     if matches_created:
         flash(f"Found item reported! {matches_created} potential owner(s) notified by email.", "success")

@@ -96,16 +96,21 @@ with app.app_context():
 def img_sim(path_a, path_b):
     """
     Image similarity using perceptual hashing (imagehash).
+    Images are resized to 64x64 before hashing to minimise memory usage.
     Returns a 0-1 score: 1.0 = identical, 0.0 = completely different.
-    Fast, lightweight, no GPU or large models needed.
     """
     try:
-        hash_a = imagehash.phash(Image.open(path_a))
-        hash_b = imagehash.phash(Image.open(path_b))
-        # phash difference ranges 0 (identical) to 64 (opposite)
+        # Open, resize small immediately, then close — minimises RAM usage
+        with Image.open(path_a) as img_a:
+            small_a = img_a.convert("RGB").resize((64, 64), Image.LANCZOS)
+        with Image.open(path_b) as img_b:
+            small_b = img_b.convert("RGB").resize((64, 64), Image.LANCZOS)
+        hash_a = imagehash.phash(small_a)
+        hash_b = imagehash.phash(small_b)
         diff = hash_a - hash_b
         return max(0.0, 1.0 - diff / 64.0)
-    except Exception:
+    except Exception as e:
+        app.logger.warning(f"[IMG] img_sim failed: {e}")
         return 0.0
 
 
@@ -132,26 +137,39 @@ def match_score(found_item, lost_items):
     t_scores = text_score(query, lost_items)
     scores   = {item.id: float(s) for item, s in zip(lost_items, t_scores)}
 
+    # Only do image matching if the found item has an image
+    # Process one image at a time to keep memory low
     if found_item.image:
         found_path = os.path.join(app.config["UPLOAD_FOLDER"], found_item.image)
-        for item in lost_items:
-            if item.image:
-                lost_path = os.path.join(app.config["UPLOAD_FOLDER"], item.image)
-                iscore = img_sim(found_path, lost_path)
-                scores[item.id] = scores[item.id] * 0.4 + iscore * 0.6
+        if os.path.exists(found_path):
+            for item in lost_items:
+                if item.image:
+                    lost_path = os.path.join(app.config["UPLOAD_FOLDER"], item.image)
+                    if os.path.exists(lost_path):
+                        iscore = img_sim(found_path, lost_path)
+                        scores[item.id] = scores[item.id] * 0.4 + iscore * 0.6
     return scores
 
 
 def send_notification(lost_item, found_item, score):
     """Email the lost item owner when a match is detected."""
+    # Skip silently if email credentials are not configured
     if not lost_item.email:
+        app.logger.info("[EMAIL] Skipped — lost item has no email")
         return
+    if not app.config.get("MAIL_USERNAME"):
+        app.logger.info("[EMAIL] Skipped — MAIL_USERNAME not set")
+        return
+    if not app.config.get("MAIL_PASSWORD"):
+        app.logger.info("[EMAIL] Skipped — MAIL_PASSWORD not set")
+        return
+
     try:
         match      = Match.query.filter_by(lost_item_id=lost_item.id,
                                            found_item_id=found_item.id).first()
         verify_url = url_for("verify_match", match_id=match.id, _external=True)
         msg = MailMessage(
-            subject=f"🎉 Possible match found for your lost {lost_item.name}!",
+            subject=f"Possible match found for your lost {lost_item.name}!",
             recipients=[lost_item.email],
             html=f"""
             <h2>Good news, {lost_item.reporter}!</h2>
@@ -172,8 +190,9 @@ def send_notification(lost_item, found_item, score):
             </p>"""
         )
         mail.send(msg)
+        app.logger.info(f"[EMAIL] Sent to {lost_item.email}")
     except Exception as e:
-        app.logger.warning(f"[EMAIL] Failed: {e}")
+        app.logger.warning(f"[EMAIL] Failed to send: {e}")
 
 
 def save_image(field):

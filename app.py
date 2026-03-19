@@ -224,6 +224,7 @@ def time_ago(dt):
 
 
 app.jinja_env.globals["time_ago"] = time_ago
+app.jinja_env.filters["time_ago"] = time_ago
 
 
 # ══════════════════════════════════════════════════════════════════════════════

@@ -46,7 +46,7 @@
                         <h5 class="fw-bold mb-0">{{ item.name }}</h5>
                         <span class="badge bg-primary" style="font-size:.7rem">{{ item.category }}</span>
                     </div>
-                    <p class="text-muted small mb-1" style="font-size:.72rem">🕐 {{ time_ago(item.reported_at) }}</p>
+                    <p class="text-muted small mb-1" style="font-size:.72rem">🕐 {{ item.reported_at | time_ago if item.reported_at else "" }}</p>
                     <p class="text-muted small">{{ item.description }}</p>
                     <hr class="my-2">
                     <p class="mb-1 small"><b>📍 Found at:</b> {{ item.location }}</p>

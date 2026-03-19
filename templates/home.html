@@ -163,7 +163,7 @@
                         <h5 class="card-title fw-bold mb-0">{{ item.name }}</h5>
                         <span class="badge bg-secondary ms-2" style="font-size:.7rem">{{ item.category or 'Other' }}</span>
                     </div>
-                    <p class="time-chip mb-2">🕐 {{ time_ago(item.reported_at) }}</p>
+                    <p class="time-chip mb-2">🕐 {{ item.reported_at | time_ago if item.reported_at else '' }}</p>
                     <p class="text-muted small mb-2">{{ item.description }}</p>
                     <hr class="my-2">
                     <p class="mb-1 small"><b>📍</b> {{ item.location }}</p>

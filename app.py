@@ -118,10 +118,18 @@ def text_score(query, items):
     """TF-IDF cosine similarity between query string and list of items."""
     if not items:
         return []
-    if len(items) == 1:
-        text = f"{items[0].name} {items[0].description} {items[0].location}".lower()
-        return [0.6 if any(w in text for w in query.lower().split()) else 0.0]
+
+    # Build text strings from model objects
     texts = [f"{i.name} {i.description} {i.location} {i.category}" for i in items]
+
+    if len(items) == 1:
+        # TF-IDF needs 2+ documents — use keyword matching for single item
+        text = texts[0].lower()
+        query_words = [w for w in query.lower().split() if len(w) > 2]
+        matches = sum(1 for w in query_words if w in text)
+        score = min(1.0, matches / max(len(query_words), 1))
+        return [score]
+
     texts.append(query)
     vec  = TfidfVectorizer(stop_words="english")
     mat  = vec.fit_transform(texts)

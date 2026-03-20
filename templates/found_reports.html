@@ -13,14 +13,27 @@
 </head>
 <body>
 <div class="container py-4">
-    <div class="d-flex justify-content-between align-items-center mb-4">
+    <div class="d-flex justify-content-between align-items-center mb-4 flex-wrap gap-2">
         <div>
             <h2 class="fw-bold mb-0">📦 Found Item Reports</h2>
             <p class="text-muted mb-0">Items found by people — check if one is yours</p>
         </div>
-        <div class="d-flex gap-2">
-            <a href="/" class="btn btn-outline-secondary">← Lost Items</a>
-            <a href="/report-found" class="btn btn-primary fw-semibold">✋ I Found Something</a>
+        <div class="d-flex gap-2 align-items-center flex-wrap">
+            <a href="/" class="btn btn-outline-secondary btn-sm">← Lost Items</a>
+            <a href="/report-found" class="btn btn-primary btn-sm fw-semibold">✋ I Found Something</a>
+            <a href="/matches" class="btn btn-outline-success btn-sm fw-semibold">🔗 Matches</a>
+            {% if session_phone %}
+                <a href="/notifications" class="btn btn-light border position-relative">
+                    🔔
+                    {% if notif_count > 0 %}
+                        <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
+                            {{ notif_count }}
+                        </span>
+                    {% endif %}
+                </a>
+            {% else %}
+                <a href="/" class="btn btn-outline-primary btn-sm">🔔 Notifications</a>
+            {% endif %}
         </div>
     </div>
 

@@ -33,13 +33,59 @@
         <p class="text-muted mb-0">Report lost items · Report found items · Get matched automatically</p>
     </div>
 
-    <!-- Nav buttons -->
-    <div class="d-flex justify-content-center gap-2 mb-4 flex-wrap">
-        <a href="/" class="btn btn-outline-dark fw-semibold">🏠 Lost Items</a>
-        <a href="/found-reports" class="btn btn-outline-primary fw-semibold">📦 Found Reports</a>
-        <a href="/report-found" class="btn btn-primary fw-semibold">✋ I Found Something</a>
-        <a href="/matches" class="btn btn-outline-success fw-semibold">🔗 Matches</a>
-        <a href="/found-items" class="btn btn-warning fw-semibold">✅ Recovered Items</a>
+    <!-- Notification bar -->
+    <div class="d-flex justify-content-between align-items-center mb-3 flex-wrap gap-2">
+        <!-- Nav buttons -->
+        <div class="d-flex gap-2 flex-wrap">
+            <a href="/" class="btn btn-outline-dark btn-sm fw-semibold">🏠 Lost Items</a>
+            <a href="/found-reports" class="btn btn-outline-primary btn-sm fw-semibold">📦 Found Reports</a>
+            <a href="/report-found" class="btn btn-primary btn-sm fw-semibold">✋ I Found Something</a>
+            <a href="/matches" class="btn btn-outline-success btn-sm fw-semibold">🔗 Matches</a>
+            <a href="/found-items" class="btn btn-warning btn-sm fw-semibold">✅ Recovered</a>
+        </div>
+
+        <!-- Notification bell + phone session -->
+        <div class="d-flex align-items-center gap-2">
+            {% if session_phone %}
+                <a href="/notifications" class="btn btn-light border position-relative">
+                    🔔
+                    {% if notif_count > 0 %}
+                        <span class="position-absolute top-0 start-100 translate-middle badge rounded-pill bg-danger">
+                            {{ notif_count }}
+                        </span>
+                    {% endif %}
+                </a>
+                <span class="text-muted small">{{ session_phone }}</span>
+                <a href="/clear-phone" class="btn btn-outline-secondary btn-sm">Sign out</a>
+            {% else %}
+                <button class="btn btn-outline-primary btn-sm" data-bs-toggle="modal" data-bs-target="#phoneModal">
+                    🔔 Check Notifications
+                </button>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Phone login modal -->
+    <div class="modal fade" id="phoneModal" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content rounded-4 border-0 shadow">
+                <div class="modal-header border-0">
+                    <h5 class="modal-title fw-bold">🔔 Check Your Notifications</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                </div>
+                <div class="modal-body">
+                    <p class="text-muted small">Enter the phone number you used when reporting your lost item.</p>
+                    <form method="POST" action="/set-phone">
+                        <input type="hidden" name="next" value="{{ request.path }}">
+                        <div class="input-group">
+                            <input type="tel" name="phone" class="form-control"
+                                   placeholder="e.g. 9876543210" required>
+                            <button type="submit" class="btn btn-primary fw-semibold">Go</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
     </div>
 
     {% with messages = get_flashed_messages(with_categories=true) %}
@@ -110,8 +156,8 @@
                     <input type="text" name="reporter" class="form-control" required>
                 </div>
                 <div class="col-12">
-                    <label class="form-label fw-semibold">Your Email <span class="text-muted small">(for match notifications)</span></label>
-                    <input type="email" name="email" class="form-control" required>
+                    <label class="form-label fw-semibold">Your Phone Number <span class="text-muted small">(for SMS match notifications — include country code e.g. +91)</span></label>
+                    <input type="tel" name="phone" class="form-control" placeholder="+919876543210" required>
                 </div>
                 <div class="col-12">
                     <label class="form-label fw-semibold">Upload Image (optional)</label>

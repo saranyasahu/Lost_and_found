@@ -1,6 +1,5 @@
 flask
 flask-sqlalchemy
-flask-mail
 scikit-learn
 imagehash
 pillow

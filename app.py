@@ -83,6 +83,54 @@ class Notification(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+# ── Auto-migrate existing database before SQLAlchemy touches it ──────────────
+import sqlite3 as _sqlite3
+
+_possible = [
+    os.path.join("instance", "lostfound.db"),
+    "lostfound.db",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "instance", "lostfound.db"),
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "lostfound.db"),
+]
+_db_path = next((p for p in _possible if os.path.exists(p)), None)
+if _db_path is None:
+    os.makedirs("instance", exist_ok=True)
+    _db_path = os.path.join("instance", "lostfound.db")
+
+_conn = _sqlite3.connect(_db_path)
+_cur  = _conn.cursor()
+
+# Add new columns to existing tables if they don't exist yet
+_migrations = [
+    ("lost_item",  "phone",       "VARCHAR(20) DEFAULT ''"),
+    ("found_item", "phone",       "VARCHAR(20) DEFAULT ''"),
+]
+for _table, _col, _typedef in _migrations:
+    try:
+        _cur.execute(f"ALTER TABLE {_table} ADD COLUMN {_col} {_typedef}")
+        print(f"[MIGRATE] Added {_table}.{_col}")
+    except _sqlite3.OperationalError:
+        pass  # column already exists
+
+# Create notification table if it doesn't exist
+_cur.execute("""
+    CREATE TABLE IF NOT EXISTS notification (
+        id         INTEGER PRIMARY KEY AUTOINCREMENT,
+        match_id   INTEGER NOT NULL REFERENCES match(id),
+        phone      VARCHAR(20),
+        message    VARCHAR(500),
+        is_read    BOOLEAN DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    )
+""")
+
+_conn.commit()
+_conn.close()
+print(f"[MIGRATE] Done — using {_db_path}")
+
+# Point SQLAlchemy at the exact file we just migrated
+app.config["SQLALCHEMY_DATABASE_URI"] = f"sqlite:///{os.path.abspath(_db_path)}"
+
 with app.app_context():
     db.create_all()
     os.makedirs("static/uploads", exist_ok=True)
